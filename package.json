@@ -28,7 +28,7 @@
       {
         "provider": "github",
         "owner": "Netrex-Voice",
-        "repo": "Netrex_Voice_App",
+        "repo": "Netrex-Voice-Standalone",
         "releaseType": "release"
       }
     ],
