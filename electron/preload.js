@@ -1,0 +1,194 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+// ============================================
+// 🚀 OPTIMIZED PRELOAD v2.0
+// ============================================
+// 
+// Optimizasyonlar:
+// 1. ✅ once() kullanımı (one-time events)
+// 2. ✅ Event handlers cleanup function döndürüyor
+// 3. ✅ removeAllListeners() kaldırıldı
+// 4. ✅ getDisplayMedia kaldırıldı (renderer'da olmalı)
+//
+// ============================================
+
+// ============================================
+// ✅ SAFE EVENT HANDLER HELPERS
+// ============================================
+
+/**
+ * Creates a persistent event handler with cleanup
+ * @param {string} channel - IPC channel name
+ * @param {function} transform - Optional transform function for event args
+ * @returns {function} - Handler registration function that returns cleanup
+ */
+const createEventHandler = (channel, transform = (_, ...args) => args) => {
+    return (callback) => {
+        const handler = (event, ...args) => callback(...transform(event, ...args));
+        ipcRenderer.on(channel, handler);
+        
+        // ✅ Return cleanup function
+        return () => ipcRenderer.removeListener(channel, handler);
+    };
+};
+
+/**
+ * Creates a one-time event handler (auto cleanup)
+ * @param {string} channel - IPC channel name
+ * @param {function} transform - Optional transform function for event args
+ * @returns {function} - Handler registration function
+ */
+const createOnceHandler = (channel, transform = (_, ...args) => args) => {
+    return (callback) => {
+        ipcRenderer.once(channel, (event, ...args) => callback(...transform(event, ...args)));
+    };
+};
+
+// ============================================
+// CONTEXT BRIDGE API
+// ============================================
+contextBridge.exposeInMainWorld("netrex", {
+  // ============================================
+  // AUTH
+  // ============================================
+  startOAuth: () => ipcRenderer.invoke("start-oauth"),
+  onOAuthSuccess: createEventHandler("oauth-success", (_, token) => [token]), // ✅ Persistent handler for SPA support
+
+  // ============================================
+  // SETTINGS & HOTKEYS
+  // ============================================
+  updateHotkey: (action, keybinding) =>
+    ipcRenderer.invoke("update-hotkey", action, keybinding),
+  getHotkey: (action) => ipcRenderer.invoke("get-hotkey", action),
+  onHotkeyTriggered: createEventHandler("hotkey-triggered", (_, action) => [action]),
+  setRecordingMode: (enabled) =>
+    ipcRenderer.invoke("set-recording-mode", enabled),
+  onRawKeydown: createEventHandler("raw-keydown", (_, event) => [event]),
+
+  // ============================================
+  // LIVEKIT
+  // ============================================
+  getLiveKitToken: (room, identity, displayName, serverIndex = 0) =>
+    ipcRenderer.invoke("get-livekit-token", room, identity, displayName, serverIndex),
+  
+  getLiveKitServerInfo: (serverIndex = 0) =>
+    ipcRenderer.invoke("get-livekit-server-info", serverIndex),
+
+  // ============================================
+  // UTILS
+  // ============================================
+  openExternalLink: (url) => ipcRenderer.invoke("open-external-link", url),
+
+  // ============================================
+  // AUTO UPDATE
+  // ============================================
+  onUpdateStatus: createEventHandler("update-status", (_, status, details) => [status, details]),
+  onUpdateProgress: createEventHandler("update-progress", (_, percent) => [percent]),
+  onUpdateRestarting: createOnceHandler("update-restarting"), // ✅ once()
+  onUpdateRestartFailed: createEventHandler("update-restart-failed", (_, error) => [error]),
+  quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
+
+  // ============================================
+  // SCREEN SHARE
+  // ============================================
+  getDesktopSources: () => ipcRenderer.invoke("get-desktop-sources"),
+  getMousePosition: () => ipcRenderer.invoke("get-mouse-position"),
+
+  // ✅ getDisplayMedia kaldırıldı - preload'da çalışmaz, renderer'da olmalı
+
+  // ============================================
+  // SETTINGS
+  // ============================================
+  setSetting: (key, value) => ipcRenderer.invoke("set-setting", key, value),
+  getSetting: (key) => ipcRenderer.invoke("get-setting", key),
+
+  // ============================================
+  // PATHS
+  // ============================================
+  getAppPath: () => ipcRenderer.invoke("get-app-path"),
+  getResourcesPath: () => ipcRenderer.invoke("get-resources-path"),
+
+  // ============================================
+  // DEVTOOLS / ADMIN
+  // ============================================
+  openDevTools: (userUid) => ipcRenderer.invoke("open-devtools", userUid),
+  isAdmin: (userUid) => ipcRenderer.invoke("is-admin", userUid),
+  setCurrentUserUid: (userUid) => ipcRenderer.invoke("set-current-user-uid", userUid),
+
+  // ============================================
+  // WINDOW
+  // ============================================
+  focusWindow: () => ipcRenderer.invoke("focus-window"),
+
+  // ============================================
+  // SPLASH
+  // ============================================
+  notifySplashComplete: () => ipcRenderer.invoke("splash-complete"),
+
+  // ============================================
+  // APP LIFECYCLE
+  // ============================================
+  reloadApp: () => ipcRenderer.send("reload-app"),
+  onAppWillQuit: createOnceHandler("app-will-quit"), // ✅ once()
+  notifyCleanupComplete: () => ipcRenderer.send("cleanup-complete"),
+
+  // ============================================
+  // WINDOW STATE
+  // ============================================
+  onWindowStateChanged: createEventHandler("window-state-changed", (_, state) => [state]),
+
+  // ============================================
+  // INPUT LISTENER
+  // ============================================
+  startInputListener: () => ipcRenderer.invoke("start-input-listener"),
+  stopInputListener: () => ipcRenderer.invoke("stop-input-listener"),
+
+  // ============================================
+  // EXIT
+  // ============================================
+  onRequestExit: createEventHandler("request-exit", (_, event) => [event]),
+  // ============================================
+  // POINTER OVERLAY
+  // ============================================
+  updatePointerOverlay: (pointers, forceShow) => ipcRenderer.send("update-pointer-overlay", pointers, forceShow),
+  onPointerOverlayUpdate: createEventHandler("update-pointer-overlay-data", (_, pointers) => [pointers]),
+  setOverlayInteractive: (interactive) => ipcRenderer.send("set-overlay-interactive", interactive),
+  closePointerOverlay: () => ipcRenderer.send("close-pointer-overlay"),
+  revokePointer: (id) => ipcRenderer.send("revoke-pointer-overlay", id),
+  revokeAllPointers: () => ipcRenderer.send("revoke-all-pointers"),
+  onPointerOverlayRevoked: createEventHandler("pointer-overlay-revoked", (_, id) => [id]),
+  onPointerOverlayRevokeAll: createEventHandler("pointer-overlay-revoke-all", () => []),
+  // Overlay'deki izin istekleri ve efektler
+  grantPointerRequest: (id) => ipcRenderer.send("pointer-overlay-grant", id),
+  denyPointerRequest: (id) => ipcRenderer.send("pointer-overlay-deny", id),
+  onPointerOverlayGranted: createEventHandler("pointer-overlay-granted", (_, id) => [id]),
+  onPointerOverlayDenied: createEventHandler("pointer-overlay-denied", (_, id) => [id]),
+  sendPointerOverlayEvent: (evt) => ipcRenderer.send("pointer-overlay-event", evt),
+  onPointerOverlayEvent: createEventHandler("pointer-overlay-event-data", (_, evt) => [evt]),
+  reportPointerOverlayWidgetRect: (rect) => ipcRenderer.send("pointer-overlay-widget-rect", rect),
+  // ============================================
+  // KAYAN MESAJ (TICKER)
+  // ============================================
+  showTickerMessage: (msg) => ipcRenderer.invoke("show-ticker-message", msg),
+  onTickerMessage: createEventHandler("ticker-message-data", (_, m) => [m]),
+  onTickerClear: createEventHandler("ticker-clear", () => []),
+  tickerIdle: () => ipcRenderer.send("ticker-idle"),
+  closeTicker: () => ipcRenderer.send("ticker-close"),
+  reportTickerButtonRect: (rect) => ipcRenderer.send("ticker-button-rect", rect),
+  reportTickerMessageGeom: (geom) => ipcRenderer.send("ticker-message-geom", geom),
+  // Watch Party: YouTube çalma listesi (CORS yüzünden ana süreçten)
+  fetchYouTubePlaylist: (listId) => ipcRenderer.invoke("fetch-youtube-playlist", listId),
+  // ============================================
+  // VOICE OVERLAY (Oyun İçi Overlay)
+  // ============================================
+  updateVoiceOverlay: (data) => ipcRenderer.send("update-voice-overlay", data),
+  onVoiceOverlayUpdate: createEventHandler("voice-overlay-data", (_, data) => [data]),
+  voiceOverlayAction: (action, payload) => ipcRenderer.send("voice-overlay-action", action, payload),
+  onVoiceOverlayAction: createEventHandler("voice-overlay-action-response", (_, action, payload) => [action, payload]),
+  setVoiceOverlayInteractive: (interactive) => ipcRenderer.send("set-voice-overlay-interactive", interactive),
+  setVoiceOverlayEnabled: (enabled, settings) => ipcRenderer.send("set-voice-overlay-enabled", enabled, settings),
+  closeVoiceOverlay: () => ipcRenderer.send("close-voice-overlay"),
+  onVoiceOverlayAntiCheat: createEventHandler("voice-overlay-anticheat", (_, detected) => [detected]),
+
+  forceQuitApp: () => ipcRenderer.invoke("app-quit-force"),
+});
